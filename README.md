@@ -29,7 +29,11 @@ npx serve .
 3. Build settings: **no build command**, output directory `/` (root) — it's a static site.
 4. Deploy. Cloudflare will give you a `*.pages.dev` URL (and you can attach a custom domain).
 
+## Security model
+- Admin status is decided **twice**: client-side in `app.js` (matching the signed-in email against `ADMIN_EMAILS`, for hiding/showing buttons) and server-side via a Postgres `is_admin()` function in `schema.sql` (for actually enforcing it). If you change who's an admin, update **both** — `ADMIN_EMAILS` in `config.js` and the email list inside `is_admin()` in `schema.sql`.
+- Any logged-in user can read products/transactions and create a new transaction (i.e. make a sale). Only admins can add/edit/delete products, or edit/delete an existing transaction — enforced by RLS, not just by hiding the buttons.
+- If you already applied the earlier version of `schema.sql` (before admin-only RLS), re-run the updated file — it drops the old "any authenticated user can write" policies before creating the admin-gated ones.
+
 ## Notes / assumptions carried over from the Android app
 - The `SalesTransactions.quntity` column name keeps the original typo so this is a drop-in fit for an existing database — see the comment in `schema.sql` if you'd rather rename it.
-- Admin status is decided client-side by matching the signed-in email against `ADMIN_EMAILS`, exactly like the Kotlin `AdminConfig.ADMIN_EMAILS` check. The included RLS policies only require "logged in," not "is admin" — if you want the database itself to block non-admins from writing products, say so and I can add a Postgres function that checks the JWT email server-side.
-- The original `TransactionsListScreen`/`AdminConfig` Kotlin files weren't included, so the transaction list and admin gating are rebuilt from what `MainActivity.kt` calls (`isAdmin` passed in, delete affordance included for admins) rather than copied line-for-line.
+- The original `TransactionsListScreen`/`AdminConfig` Kotlin files weren't included, so the transaction list and admin gating are rebuilt from what `MainActivity.kt` calls (`isAdmin` passed in) rather than copied line-for-line.

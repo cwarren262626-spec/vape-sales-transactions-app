@@ -295,11 +295,22 @@ async function loadTransactions() {
       </div>
       <div class="meta">Qty: ${tx.quntity} · ${escapeHtml(tx.SalesPerson)} · ${formatDate(tx.created_at)}</div>
       ${tx.remarks ? `<div class="meta">${escapeHtml(tx.remarks)}</div>` : ""}
-      ${state.isAdmin ? `<div class="row-actions"><button class="btn btn-ghost btn-sm delete-tx">Delete</button></div>` : ""}
+      ${state.isAdmin ? `
+        <div class="row-actions">
+          <button class="btn btn-ghost btn-sm edit-tx">Edit</button>
+          <button class="btn btn-ghost btn-sm delete-tx">Delete</button>
+        </div>` : ""}
     </div>
   `).join("");
 
   if (state.isAdmin) {
+    $all(".edit-tx", listEl).forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const id = e.target.closest(".tx-row").dataset.id;
+        const tx = data.find((t) => String(t.id) === id);
+        openTransactionEditDialog(tx);
+      });
+    });
     $all(".delete-tx", listEl).forEach((btn) => {
       btn.addEventListener("click", async (e) => {
         const row = e.target.closest(".tx-row");
@@ -313,6 +324,70 @@ async function loadTransactions() {
       });
     });
   }
+}
+
+function openTransactionEditDialog(tx) {
+  const html = `
+    <div class="modal">
+      <h3>Edit Transaction</h3>
+      <div class="field"><label>Product Name</label>
+        <input type="text" id="txd-product" value="${escapeHtml(tx.ProductName)}" />
+      </div>
+      <div class="field"><label>Quantity</label>
+        <input type="number" id="txd-qty" min="1" value="${tx.quntity}" />
+      </div>
+      <div class="field"><label>Amount (₱)</label>
+        <input type="number" id="txd-amount" min="0" step="0.01" value="${tx.amount}" />
+      </div>
+      <div class="field"><label>Salesperson</label>
+        <input type="text" id="txd-salesperson" value="${escapeHtml(tx.SalesPerson)}" />
+      </div>
+      <div class="field"><label>Remarks (optional)</label>
+        <textarea id="txd-remarks" rows="2">${escapeHtml(tx.remarks || "")}</textarea>
+      </div>
+      <p class="error-text hidden" id="txd-error"></p>
+      <div class="row-actions" style="margin-top:6px;">
+        <button class="btn btn-ghost btn-sm" id="txd-cancel">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="txd-save">Save</button>
+      </div>
+    </div>
+  `;
+  const backdrop = openModal(html);
+
+  $("#txd-cancel", backdrop).addEventListener("click", () => closeModal(backdrop));
+  $("#txd-save", backdrop).addEventListener("click", async () => {
+    const productName = $("#txd-product", backdrop).value.trim();
+    const qty = parseInt($("#txd-qty", backdrop).value, 10);
+    const amount = parseFloat($("#txd-amount", backdrop).value);
+    const salesperson = $("#txd-salesperson", backdrop).value.trim();
+    const remarks = $("#txd-remarks", backdrop).value.trim();
+    const errorEl = $("#txd-error", backdrop);
+
+    if (!productName) { errorEl.textContent = "Product name is required"; errorEl.classList.remove("hidden"); return; }
+    if (!qty || qty <= 0) { errorEl.textContent = "Enter a valid quantity"; errorEl.classList.remove("hidden"); return; }
+    if (isNaN(amount) || amount < 0) { errorEl.textContent = "Enter a valid amount"; errorEl.classList.remove("hidden"); return; }
+    if (!salesperson) { errorEl.textContent = "Salesperson is required"; errorEl.classList.remove("hidden"); return; }
+
+    const { error } = await supabaseClient
+      .from("SalesTransactions")
+      .update({
+        ProductName: productName,
+        quntity: qty,
+        amount: amount,
+        SalesPerson: salesperson,
+        remarks: remarks || null,
+      })
+      .eq("id", tx.id);
+
+    if (error) {
+      errorEl.textContent = "Save failed: " + error.message;
+      errorEl.classList.remove("hidden");
+      return;
+    }
+    showToast("Transaction updated");
+    closeModal(backdrop);
+    loadTransactions();
+  });
 }
 
 // ---------- Products ----------
