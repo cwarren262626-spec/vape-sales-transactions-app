@@ -14,7 +14,7 @@
 <div id="login-view">
   <div class="login-card">
     <div class="brand-mark">KUSLAGVAPE</div>
-    <h1>Sign In</h1>
+    <h1>Sign in</h1>
     <form id="login-form">
       <div class="field">
         <label for="login-email">Email</label>
@@ -25,7 +25,7 @@
         <input type="password" id="login-password" autocomplete="current-password" required />
       </div>
       <p class="error-text" id="login-error"></p>
-      <button type="submit" class="btn btn-primary" id="login-submit">Sign In</button>
+      <button type="submit" class="btn btn-primary" id="login-submit">Sign in</button>
     </form>
   </div>
 </div>
@@ -33,11 +33,19 @@
 <!-- ===================== APP ===================== -->
 <div id="app-view" class="hidden">
   <header class="topbar">
-    <div>
-      <div class="title">Sales Transactions</div>
-      <div class="subtitle" id="current-email"></div>
+    <div class="title-group">
+      <div class="avatar" id="user-avatar">–</div>
+      <div>
+        <div class="title">Sales Transactions</div>
+        <div class="subtitle-row">
+          <span class="subtitle" id="current-email"></span>
+          <span class="role-chip hidden" id="role-chip">ADMIN</span>
+        </div>
+      </div>
     </div>
-    <button class="btn btn-ghost btn-sm" id="sign-out-btn">Sign Out</button>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost btn-sm" id="sign-out-btn">Sign out</button>
+    </div>
   </header>
 
   <main class="screen">
@@ -45,7 +53,7 @@
     <!-- New Transaction -->
     <section id="screen-new">
       <div class="card">
-        <h2>New Transaction</h2>
+        <h2>New transaction</h2>
         <div id="tx-product-box"></div>
 
         <form id="tx-form">
@@ -81,36 +89,83 @@
 
     <!-- Transactions -->
     <section id="screen-transactions" class="hidden">
+      <div class="filters-row">
+        <div class="field">
+          <label for="user-filter">Filter by user</label>
+          <select id="user-filter">
+            <option value="">All users</option>
+          </select>
+        </div>
+      </div>
+      <p class="muted" id="tx-count" style="margin-bottom:12px;"></p>
       <div id="tx-list"></div>
     </section>
 
     <!-- Products -->
     <section id="screen-products" class="hidden">
       <div class="row-between" style="margin-bottom:12px;">
-        <h2 style="margin:0;font-size:18px;">Product List</h2>
+        <h2 style="margin:0;font-size:15px;font-weight:600;">Product list</h2>
         <span class="stat-num" id="product-total-stock"></span>
       </div>
 
-      <div class="field hidden">
-        <label for="brand-filter">Filter by brand</label>
-        <select id="brand-filter"></select>
+      <div class="filters-row">
+        <div class="field hidden" id="brand-filter-wrap">
+          <label for="brand-filter">Filter by brand</label>
+          <select id="brand-filter"></select>
+        </div>
       </div>
 
       <p class="muted" id="product-count" style="margin-bottom:12px;"></p>
 
-      <button class="btn btn-ghost hidden" id="report-btn" style="margin-bottom:14px;">Generate Report</button>
+      <button class="btn btn-ghost hidden" id="report-btn" style="margin-bottom:14px;">Generate report</button>
 
       <div id="product-list"></div>
+    </section>
+
+    <!-- Dashboard (admin only) -->
+    <section id="screen-dashboard" class="hidden">
+      <div class="row-between" style="margin-bottom:14px;">
+        <h2 style="margin:0;font-size:15px;font-weight:600;">Dashboard</h2>
+        <span class="stat-num" id="dashboard-updated"></span>
+      </div>
+      <div id="dashboard-content"><p class="muted">Loading…</p></div>
+    </section>
+
+    <!-- Users (admin only) -->
+    <section id="screen-users" class="hidden">
+      <div class="row-between" style="margin-bottom:12px;">
+        <h2 style="margin:0;font-size:15px;font-weight:600;">User management</h2>
+      </div>
+      <p class="muted" id="user-count" style="margin-bottom:12px;"></p>
+      <div id="user-list"></div>
     </section>
 
   </main>
 
   <button class="fab hidden" id="add-product-fab" title="Add product">+</button>
+  <button class="fab hidden" id="add-user-fab" title="Add user">+</button>
 
   <nav class="bottom-tabs">
-    <button data-tab="new" class="active"><span class="icon">＋</span>New Transaction</button>
-    <button data-tab="transactions"><span class="icon">📋</span>Transactions</button>
-    <button data-tab="products" id="admin-only-nav"><span class="icon">📦</span>Products</button>
+    <button data-tab="new" class="active">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+      New sale
+    </button>
+    <button data-tab="transactions">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/></svg>
+      Transactions
+    </button>
+    <button data-tab="products" id="products-nav">
+      <svg viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Products
+    </button>
+    <button data-tab="dashboard" id="dashboard-nav" class="hidden">
+      <svg viewBox="0 0 24 24"><path d="M4 19V10M10 19V5M16 19v-7M4 19h16" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Dashboard
+    </button>
+    <button data-tab="users" id="users-nav" class="hidden">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.6 3.1-6.4 7-6.4s7 2.8 7 6.4" stroke-linecap="round"/></svg>
+      Users
+    </button>
   </nav>
 </div>
 

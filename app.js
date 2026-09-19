@@ -1,6 +1,13 @@
 // ---------------------------------------------------------------
 // KuslagVape — Sales Transactions web app
 // Vanilla JS + Supabase JS v2. See config.js for credentials.
+//
+// User management (add user / change password) is NOT done with
+// the anon key — Supabase has no safe way to create users or set
+// passwords for other accounts from client-side code. Those calls
+// go through the "admin-users" Edge Function (see
+// supabase/functions/admin-users), which uses the service_role key
+// on the server and re-checks is_admin() before doing anything.
 // ---------------------------------------------------------------
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -11,6 +18,8 @@ const state = {
   activeTab: "new",
   products: [],
   selectedProduct: null,
+  transactions: [],
+  users: [],
 };
 
 // ---------- helpers ----------
@@ -45,6 +54,14 @@ function formatDate(iso) {
   });
 }
 
+function initialsFor(email) {
+  if (!email) return "–";
+  const name = email.split("@")[0];
+  const parts = name.split(/[._-]/).filter(Boolean);
+  const letters = parts.length >= 2 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
+  return letters.toUpperCase();
+}
+
 // ---------- auth ----------
 
 async function init() {
@@ -74,8 +91,10 @@ async function init() {
   });
 
   $("#add-product-fab").addEventListener("click", () => openProductDialog(null));
+  $("#add-user-fab").addEventListener("click", () => openUserDialog());
   $("#report-btn").addEventListener("click", openReportDialog);
   $("#brand-filter").addEventListener("change", renderProducts);
+  $("#user-filter").addEventListener("change", renderTransactions);
 }
 
 function applyAuthState() {
@@ -86,7 +105,10 @@ function applyAuthState() {
     const email = state.session.user.email || "";
     state.isAdmin = ADMIN_EMAILS.includes(email);
     $("#current-email").textContent = email;
-    $("#admin-only-nav").classList.toggle("hidden", false);
+    $("#user-avatar").textContent = initialsFor(email);
+    $("#role-chip").classList.toggle("hidden", !state.isAdmin);
+    $("#users-nav").classList.toggle("hidden", !state.isAdmin);
+    $("#dashboard-nav").classList.toggle("hidden", !state.isAdmin);
     switchTab("new");
     loadProducts();
   }
@@ -109,7 +131,7 @@ async function handleLogin(e) {
   btn.textContent = "Signing in…";
   const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
   btn.disabled = false;
-  btn.textContent = "Sign In";
+  btn.textContent = "Sign in";
 
   if (error) {
     errorEl.textContent = "Login failed: " + error.message;
@@ -119,14 +141,23 @@ async function handleLogin(e) {
 // ---------- tabs ----------
 
 function switchTab(tab) {
+  if ((tab === "users" || tab === "dashboard") && !state.isAdmin) tab = "new";
   state.activeTab = tab;
   $all("nav.bottom-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $all("main.screen > section").forEach((s) => s.classList.add("hidden"));
   $("#screen-" + tab).classList.remove("hidden");
 
+  // Single source of truth for both floating "+" buttons: each is only
+  // ever visible for an admin on its own tab, and hidden on every other
+  // tab (including right away, before that tab's data has loaded).
+  $("#add-product-fab").classList.toggle("hidden", !(state.isAdmin && tab === "products"));
+  $("#add-user-fab").classList.toggle("hidden", !(state.isAdmin && tab === "users"));
+
   if (tab === "transactions") loadTransactions();
   if (tab === "products") loadProducts(true);
   if (tab === "new") loadProducts();
+  if (tab === "users") loadUsers();
+  if (tab === "dashboard") loadDashboard();
 }
 
 // ---------- New Transaction ----------
@@ -226,32 +257,25 @@ async function handleSaveTransaction(e) {
   btn.disabled = true;
   btn.textContent = "Saving…";
 
-  const { error: insertError } = await supabaseClient.from("SalesTransactions").insert({
-    ProductName: displayName(product),
-    quntity: qty,
-    amount: amount,
-    SalesPerson: state.session.user.email,
-    remarks: remarks || null,
+  // Recording the sale and decreasing stock happens as one atomic
+  // database call (see record_sale() in schema.sql) — this is what
+  // prevents two simultaneous sales from clobbering each other's
+  // stock update.
+  const { error: saleError } = await supabaseClient.rpc("record_sale", {
+    p_product_id: product.id,
+    p_qty: qty,
+    p_amount: amount,
+    p_remarks: remarks || null,
   });
 
-  if (insertError) {
-    errorEl.textContent = "Save failed: " + insertError.message;
+  if (saleError) {
+    errorEl.textContent = "Save failed: " + saleError.message;
     btn.disabled = false;
     btn.textContent = "Save";
     return;
   }
 
-  const newStock = Math.max(product.stocks_count - qty, 0);
-  const { error: updateError } = await supabaseClient
-    .from("ProductList")
-    .update({ stocks_count: newStock })
-    .eq("id", product.id);
-
-  if (updateError) {
-    showToast("Transaction saved, but stock update failed: " + updateError.message, true);
-  } else {
-    showToast("Transaction saved!");
-  }
+  showToast("Transaction saved!");
 
   // reset form
   state.selectedProduct = null;
@@ -282,18 +306,45 @@ async function loadTransactions() {
     return;
   }
 
-  if (!data || data.length === 0) {
-    listEl.innerHTML = `<p class="muted">No transactions yet.</p>`;
+  state.transactions = data || [];
+  renderTransactions();
+}
+
+function renderTransactions() {
+  const data = state.transactions;
+  const listEl = $("#tx-list");
+  const userFilter = $("#user-filter");
+
+  // populate the salesperson filter with whoever has recorded a sale
+  const people = [...new Set(data.map((t) => t.SalesPerson).filter(Boolean))].sort();
+  const currentValue = userFilter.value;
+  userFilter.innerHTML = `<option value="">All users</option>` +
+    people.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join("");
+  if (people.includes(currentValue)) userFilter.value = currentValue;
+
+  const selectedPerson = userFilter.value;
+  const filtered = selectedPerson ? data.filter((t) => t.SalesPerson === selectedPerson) : data;
+
+  $("#tx-count").textContent = data.length === 0
+    ? ""
+    : `Showing ${filtered.length} of ${data.length} transactions`;
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="empty-state"><p class="muted">${data.length === 0 ? "No transactions yet." : "No transactions from this user."}</p></div>`;
     return;
   }
 
-  listEl.innerHTML = data.map((tx) => `
+  listEl.innerHTML = filtered.map((tx) => `
     <div class="tx-row" data-id="${tx.id}">
       <div class="top-line">
         <span>${escapeHtml(tx.ProductName)}</span>
         <span class="amount">₱${Number(tx.amount).toFixed(2)}</span>
       </div>
-      <div class="meta">Qty: ${tx.quntity} · ${escapeHtml(tx.SalesPerson)} · ${formatDate(tx.created_at)}</div>
+      <div class="meta">
+        <span>Qty ${tx.quntity}</span>
+        <span class="tag-person">${escapeHtml(tx.SalesPerson)}</span>
+        <span>${formatDate(tx.created_at)}</span>
+      </div>
       ${tx.remarks ? `<div class="meta">${escapeHtml(tx.remarks)}</div>` : ""}
       ${state.isAdmin ? `
         <div class="row-actions">
@@ -329,8 +380,8 @@ async function loadTransactions() {
 function openTransactionEditDialog(tx) {
   const html = `
     <div class="modal">
-      <h3>Edit Transaction</h3>
-      <div class="field"><label>Product Name</label>
+      <h3>Edit transaction</h3>
+      <div class="field"><label>Product name</label>
         <input type="text" id="txd-product" value="${escapeHtml(tx.ProductName)}" />
       </div>
       <div class="field"><label>Quantity</label>
@@ -399,20 +450,19 @@ function renderProducts() {
   brandSelect.innerHTML = `<option value="">All brands</option>` +
     brands.map((b) => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join("");
   if (brands.includes(currentBrand)) brandSelect.value = currentBrand;
-  brandSelect.parentElement.classList.toggle("hidden", brands.length === 0);
+  $("#brand-filter-wrap").classList.toggle("hidden", brands.length === 0);
 
   const selectedBrand = brandSelect.value;
   const filtered = selectedBrand ? state.products.filter((p) => p.brand === selectedBrand) : state.products;
   const totalStock = filtered.reduce((sum, p) => sum + (p.stocks_count || 0), 0);
 
-  $("#product-total-stock").textContent = `Total Stock: ${totalStock}`;
+  $("#product-total-stock").textContent = `Total stock: ${totalStock}`;
   $("#product-count").textContent = `Showing ${filtered.length} of ${state.products.length} products`;
   $("#report-btn").classList.toggle("hidden", state.products.length === 0);
-  $("#add-product-fab").classList.toggle("hidden", !state.isAdmin);
 
   const listEl = $("#product-list");
   if (filtered.length === 0) {
-    listEl.innerHTML = `<p class="muted">${state.products.length === 0 ? "No products yet." : "No products match this brand."}</p>`;
+    listEl.innerHTML = `<div class="empty-state"><p class="muted">${state.products.length === 0 ? "No products yet." : "No products match this brand."}</p></div>`;
     return;
   }
 
@@ -455,8 +505,8 @@ function openProductDialog(existing) {
   const isNew = !existing;
   const html = `
     <div class="modal">
-      <h3>${isNew ? "Add Product" : "Edit Product"}</h3>
-      <div class="field"><label>Product Name</label>
+      <h3>${isNew ? "Add product" : "Edit product"}</h3>
+      <div class="field"><label>Product name</label>
         <input type="text" id="pd-name" value="${existing ? escapeHtml(existing.product_name) : ""}" />
       </div>
       <div class="field"><label>Brand</label>
@@ -465,7 +515,7 @@ function openProductDialog(existing) {
       <div class="field"><label>Flavor</label>
         <input type="text" id="pd-flavor" value="${existing ? escapeHtml(existing.flavor || "") : ""}" />
       </div>
-      <div class="field"><label>Stock Count</label>
+      <div class="field"><label>Stock count</label>
         <input type="number" id="pd-stock" min="0" value="${existing ? existing.stocks_count : 0}" />
       </div>
       <p class="error-text hidden" id="pd-error"></p>
@@ -514,8 +564,8 @@ function openProductDialog(existing) {
 function openDeleteDialog(product) {
   const html = `
     <div class="modal">
-      <h3>Delete Product</h3>
-      <p>Delete "${escapeHtml(product.product_name)}"? This can't be undone.</p>
+      <h3>Delete product</h3>
+      <p class="muted">Delete "${escapeHtml(product.product_name)}"? This can't be undone.</p>
       <p class="error-text hidden" id="del-error"></p>
       <div class="row-actions" style="margin-top:6px;">
         <button class="btn btn-ghost btn-sm" id="del-cancel">Cancel</button>
@@ -544,7 +594,7 @@ function openReportDialog() {
   const html = `
     <div class="modal">
       <div class="row-between">
-        <h3>Stock Report</h3>
+        <h3>Stock report</h3>
         <div class="row-actions" style="margin-top:0;">
           <button class="btn btn-ghost btn-sm" id="report-copy">Copy</button>
           <button class="btn btn-ghost btn-sm" id="report-close">Close</button>
@@ -600,6 +650,309 @@ function buildStockReport(products) {
   lines.push("Total Products: " + products.length);
 
   return lines.join("\n");
+}
+
+// ---------- Dashboard (admin only) ----------
+
+async function loadDashboard() {
+  const el = $("#dashboard-content");
+  el.innerHTML = `<p class="muted">Loading…</p>`;
+
+  const [{ data: products, error: prodErr }, { data: txs, error: txErr }] = await Promise.all([
+    supabaseClient.from("ProductList").select("*"),
+    supabaseClient.from("SalesTransactions").select("*"),
+  ]);
+
+  if (prodErr || txErr) {
+    el.innerHTML = `<p class="error-text">Failed to load dashboard: ${escapeHtml((prodErr || txErr).message)}</p>`;
+    return;
+  }
+
+  state.products = products || [];
+  state.transactions = txs || [];
+  $("#dashboard-updated").textContent = "Updated " + formatDate(new Date().toISOString());
+  renderDashboard();
+}
+
+function barRow(label, value, max, valueText) {
+  const pct = max > 0 ? Math.max(4, Math.round((value / max) * 100)) : 0;
+  return `
+    <div class="bar-row">
+      <div class="bar-row-top">
+        <span class="bar-label">${escapeHtml(label)}</span>
+        <span class="bar-value">${escapeHtml(valueText)}</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+    </div>
+  `;
+}
+
+function renderDashboard() {
+  const txs = state.transactions;
+  const products = state.products;
+
+  const totalRevenue = txs.reduce((s, t) => s + Number(t.amount || 0), 0);
+  const totalQtySold = txs.reduce((s, t) => s + Number(t.quntity || 0), 0);
+  const totalStock = products.reduce((s, p) => s + (p.stocks_count || 0), 0);
+  const outOfStock = products.filter((p) => (p.stocks_count || 0) === 0).length;
+  const lowStock = products.filter((p) => (p.stocks_count || 0) > 0 && p.stocks_count <= 5).length;
+
+  const byProduct = {};
+  txs.forEach((t) => { byProduct[t.ProductName] = (byProduct[t.ProductName] || 0) + Number(t.quntity || 0); });
+  const topProducts = Object.entries(byProduct).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const maxProductQty = topProducts.length ? topProducts[0][1] : 0;
+
+  const byPerson = {};
+  txs.forEach((t) => { byPerson[t.SalesPerson] = (byPerson[t.SalesPerson] || 0) + Number(t.amount || 0); });
+  const topPeople = Object.entries(byPerson).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const maxPersonRevenue = topPeople.length ? topPeople[0][1] : 0;
+
+  const recent = [...txs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
+
+  $("#dashboard-content").innerHTML = `
+    <div class="dash-grid">
+      <div class="dash-stat">
+        <div class="dash-stat-label">Total revenue</div>
+        <div class="dash-stat-value">₱${totalRevenue.toFixed(2)}</div>
+      </div>
+      <div class="dash-stat">
+        <div class="dash-stat-label">Transactions</div>
+        <div class="dash-stat-value">${txs.length}</div>
+      </div>
+      <div class="dash-stat">
+        <div class="dash-stat-label">Units sold</div>
+        <div class="dash-stat-value">${totalQtySold}</div>
+      </div>
+      <div class="dash-stat">
+        <div class="dash-stat-label">Stock on hand</div>
+        <div class="dash-stat-value">${totalStock}</div>
+      </div>
+      <div class="dash-stat ${outOfStock > 0 ? "dash-stat-danger" : ""}">
+        <div class="dash-stat-label">Out of stock</div>
+        <div class="dash-stat-value">${outOfStock}</div>
+      </div>
+      <div class="dash-stat ${lowStock > 0 ? "dash-stat-warn" : ""}">
+        <div class="dash-stat-label">Low stock (≤5)</div>
+        <div class="dash-stat-value">${lowStock}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Top products</h2>
+      ${topProducts.length
+        ? topProducts.map(([name, qty]) => barRow(name, qty, maxProductQty, qty + " sold")).join("")
+        : `<p class="muted">No sales yet.</p>`}
+    </div>
+
+    <div class="card">
+      <h2>Top salespeople</h2>
+      ${topPeople.length
+        ? topPeople.map(([name, rev]) => barRow(name, rev, maxPersonRevenue, "₱" + rev.toFixed(2))).join("")
+        : `<p class="muted">No sales yet.</p>`}
+    </div>
+
+    <div class="card">
+      <h2>Recent activity</h2>
+      ${recent.length
+        ? recent.map((t) => `
+            <div class="tx-row" style="margin-bottom:8px;">
+              <div class="top-line"><span>${escapeHtml(t.ProductName)}</span><span class="amount">₱${Number(t.amount).toFixed(2)}</span></div>
+              <div class="meta"><span class="tag-person">${escapeHtml(t.SalesPerson)}</span><span>${formatDate(t.created_at)}</span></div>
+            </div>
+          `).join("")
+        : `<p class="muted">No transactions yet.</p>`}
+    </div>
+  `;
+}
+
+// ---------- Users (admin only) ----------
+// Calls the "admin-users" Edge Function, which holds the service_role
+// key server-side and re-checks is_admin() before touching auth.users.
+
+async function callAdminUsers(action, payload = {}) {
+  const { data, error } = await supabaseClient.functions.invoke("admin-users", {
+    body: { action, ...payload },
+  });
+  if (error) {
+    // supabase-js puts the function's own JSON error body on error.context in v2
+    let message = error.message || "Request failed";
+    try {
+      const body = await error.context.json();
+      if (body?.error) message = body.error;
+    } catch { /* ignore, fall back to error.message */ }
+    throw new Error(message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+async function loadUsers() {
+  const listEl = $("#user-list");
+  listEl.innerHTML = `<p class="muted">Loading…</p>`;
+
+  try {
+    const data = await callAdminUsers("list");
+    state.users = data.users || [];
+    renderUsers();
+  } catch (err) {
+    listEl.innerHTML = `<p class="error-text">Failed to load users: ${escapeHtml(err.message)}
+      <br/>Make sure the "admin-users" Edge Function is deployed (see README.md).</p>`;
+  }
+}
+
+function renderUsers() {
+  const listEl = $("#user-list");
+  $("#user-count").textContent = `${state.users.length} user${state.users.length === 1 ? "" : "s"}`;
+
+  if (state.users.length === 0) {
+    listEl.innerHTML = `<div class="empty-state"><p class="muted">No users yet.</p></div>`;
+    return;
+  }
+
+  listEl.innerHTML = state.users.map((u) => {
+    const isAdminUser = ADMIN_EMAILS.includes(u.email);
+    const isSelf = u.id === state.session.user.id;
+    return `
+      <div class="user-row" data-id="${u.id}">
+        <div class="name">
+          ${escapeHtml(u.email)}
+          ${isAdminUser ? `<span class="role-chip">ADMIN</span>` : ""}
+        </div>
+        <div class="subtitle">Joined ${formatDate(u.created_at)}${u.last_sign_in_at ? " · last sign-in " + formatDate(u.last_sign_in_at) : " · never signed in"}</div>
+        <div class="row-actions">
+          <button class="btn btn-ghost btn-sm edit-password">Change password</button>
+          ${isSelf ? "" : `<button class="btn btn-danger btn-sm delete-user">Delete</button>`}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  $all(".edit-password", listEl).forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const id = e.target.closest(".user-row").dataset.id;
+      const user = state.users.find((u) => u.id === id);
+      openPasswordDialog(user);
+    });
+  });
+  $all(".delete-user", listEl).forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const id = e.target.closest(".user-row").dataset.id;
+      const user = state.users.find((u) => u.id === id);
+      openDeleteUserDialog(user);
+    });
+  });
+}
+
+function openUserDialog() {
+  const html = `
+    <div class="modal">
+      <h3>Add user</h3>
+      <div class="field"><label>Email</label>
+        <input type="email" id="ud-email" autocomplete="off" />
+      </div>
+      <div class="field"><label>Temporary password</label>
+        <input type="password" id="ud-password" autocomplete="new-password" minlength="6" />
+      </div>
+      <p class="muted" style="margin-top:-6px;">Share this password with them directly — they can change it later from the Users tab (ask an admin) or their own account settings.</p>
+      <p class="error-text hidden" id="ud-error"></p>
+      <div class="row-actions" style="margin-top:6px;">
+        <button class="btn btn-ghost btn-sm" id="ud-cancel">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="ud-save">Create user</button>
+      </div>
+    </div>
+  `;
+  const backdrop = openModal(html);
+  $("#ud-cancel", backdrop).addEventListener("click", () => closeModal(backdrop));
+  $("#ud-save", backdrop).addEventListener("click", async () => {
+    const email = $("#ud-email", backdrop).value.trim();
+    const password = $("#ud-password", backdrop).value;
+    const errorEl = $("#ud-error", backdrop);
+    const saveBtn = $("#ud-save", backdrop);
+
+    if (!email) { errorEl.textContent = "Email is required"; errorEl.classList.remove("hidden"); return; }
+    if (!password || password.length < 6) { errorEl.textContent = "Password must be at least 6 characters"; errorEl.classList.remove("hidden"); return; }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Creating…";
+    try {
+      await callAdminUsers("create_user", { email, password });
+      showToast("User created");
+      closeModal(backdrop);
+      loadUsers();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.classList.remove("hidden");
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Create user";
+    }
+  });
+}
+
+function openPasswordDialog(user) {
+  const html = `
+    <div class="modal">
+      <h3>Change password</h3>
+      <p class="muted" style="margin-top:-8px;">${escapeHtml(user.email)}</p>
+      <div class="field"><label>New password</label>
+        <input type="password" id="pw-password" autocomplete="new-password" minlength="6" />
+      </div>
+      <p class="error-text hidden" id="pw-error"></p>
+      <div class="row-actions" style="margin-top:6px;">
+        <button class="btn btn-ghost btn-sm" id="pw-cancel">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="pw-save">Update password</button>
+      </div>
+    </div>
+  `;
+  const backdrop = openModal(html);
+  $("#pw-cancel", backdrop).addEventListener("click", () => closeModal(backdrop));
+  $("#pw-save", backdrop).addEventListener("click", async () => {
+    const password = $("#pw-password", backdrop).value;
+    const errorEl = $("#pw-error", backdrop);
+    const saveBtn = $("#pw-save", backdrop);
+
+    if (!password || password.length < 6) { errorEl.textContent = "Password must be at least 6 characters"; errorEl.classList.remove("hidden"); return; }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Updating…";
+    try {
+      await callAdminUsers("update_password", { user_id: user.id, password });
+      showToast("Password updated");
+      closeModal(backdrop);
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.classList.remove("hidden");
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Update password";
+    }
+  });
+}
+
+function openDeleteUserDialog(user) {
+  const html = `
+    <div class="modal">
+      <h3>Delete user</h3>
+      <p class="muted">Delete "${escapeHtml(user.email)}"? They'll immediately lose access. This can't be undone.</p>
+      <p class="error-text hidden" id="du-error"></p>
+      <div class="row-actions" style="margin-top:6px;">
+        <button class="btn btn-ghost btn-sm" id="du-cancel">Cancel</button>
+        <button class="btn btn-danger btn-sm" id="du-confirm">Delete</button>
+      </div>
+    </div>
+  `;
+  const backdrop = openModal(html);
+  $("#du-cancel", backdrop).addEventListener("click", () => closeModal(backdrop));
+  $("#du-confirm", backdrop).addEventListener("click", async () => {
+    const errorEl = $("#du-error", backdrop);
+    try {
+      await callAdminUsers("delete_user", { user_id: user.id });
+      showToast("User deleted");
+      closeModal(backdrop);
+      loadUsers();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.classList.remove("hidden");
+    }
+  });
 }
 
 // ---------- modal helpers ----------
