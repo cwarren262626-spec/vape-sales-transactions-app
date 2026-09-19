@@ -64,7 +64,14 @@ always means step 3 hasn't been done yet for this project.
 - Any logged-in user can read products/transactions and create a new transaction (i.e. make a sale). Only admins can add/edit/delete products, edit/delete an existing transaction, or manage users — enforced by RLS (and, for user management, by the Edge Function), not just by hiding the buttons.
 - If you already applied the earlier version of `schema.sql` (before admin-only RLS), re-run the updated file — it drops the old "any authenticated user can write" policies before creating the admin-gated ones.
 
-## What changed in this pass
+## What changed in this pass (latest)
+- **Sales trend chart moved off Transactions and onto the Dashboard**, and rebuilt as an animated inline SVG: a 14-day gradient area chart where the line draws itself in, the fill rises under it, points pop in on a stagger, and the best day's marker keeps a slow pulse. Hovering any point shows the date and that day's revenue. The Transactions tab is now just the filter + list.
+- **Top products is now a real animated bar chart** (inline SVG, no chart library): gradient horizontal bars that grow from the left on a stagger, with a shine sweep, rank badges, and a hover tooltip per bar.
+- **Fixed the oversized nav selection on desktop.** The sidebar is a column flex container, but the nav buttons kept the mobile `flex: 1`, so each one stretched to fill the whole viewport height — making the active item's highlight look enormous. They're now `flex: 0 0 auto` (natural height).
+- **Layout is fluid now.** The content area and the mobile tab bar no longer cap at a fixed 640px / 1120px; they use all available width, and the product/user grids reflow into as many columns as fit on wide screens.
+- Both charts respect `prefers-reduced-motion` — they render in their final state with no animation for anyone who's asked for that.
+
+## What changed in the previous pass
 - Visual refresh: new dark palette, type scale, SVG tab icons (swapped out the emoji), pill-shaped chips, centered modals with a scale/fade transition, an avatar + role chip in the top bar, and general spacing/contrast cleanup across every screen.
 - **Transactions** tab now has a **Filter by user** dropdown, built from whoever has an actual sale on record.
 - New **Users** tab (admin-only): list accounts, add a user, change a user's password, or delete a user — via the `admin-users` Edge Function described above.
