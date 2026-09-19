@@ -1235,7 +1235,7 @@ function renderUsers() {
         <div class="row-icon ri-person">${initialsFor(u.email)}</div>
         <div class="row-body">
           <div class="name">
-            ${escapeHtml(u.email)}
+            <span class="user-email">${escapeHtml(u.email)}</span>
             ${isAdminUser ? `<span class="role-chip">ADMIN</span>` : ""}
           </div>
           <div class="subtitle">Joined ${formatDate(u.created_at)}${u.last_sign_in_at ? " · last sign-in " + formatDate(u.last_sign_in_at) : " · never signed in"}</div>

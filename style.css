@@ -319,9 +319,15 @@ nav.bottom-tabs button.active { color: var(--accent); background: var(--accent-s
 
 .stat-num { font-weight: 700; color: var(--accent); font-size: 13px; }
 
-.filters-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
-.filters-row .field { min-width: 150px; }
-.filters-row .field { flex: 1; margin-bottom: 0; }
+/* Stacked on phones (three fields side-by-side at ~150px min-width
+   each doesn't fit 390px, which is what produced the lopsided
+   1-then-2 wrap); from tablet width up they sit in a row. */
+.filters-row { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.filters-row .field { width: 100%; margin-bottom: 0; }
+@media (min-width: 560px) {
+  .filters-row { flex-direction: row; flex-wrap: wrap; }
+  .filters-row .field { flex: 1 1 170px; width: auto; }
+}
 
 /* ---------- Product search dropdown ---------- */
 .searchable { position: relative; }
@@ -438,7 +444,24 @@ nav.bottom-tabs button.active { color: var(--accent); background: var(--accent-s
 .stock-ok { color: var(--mint-text); background: var(--mint-bg); }
 .stock-out { color: var(--red-text); background: var(--red-bg); }
 
-.user-row .name { font-weight: 700; font-size: 14.5px; display: flex; align-items: center; gap: 8px; }
+.user-row .name {
+  font-weight: 700;
+  font-size: 14.5px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 4px;
+  gap: 8px;
+  min-width: 0; /* let the email shrink instead of forcing the row
+                   (and the page) wider than the viewport */
+}
+.user-email {
+  min-width: 0;
+  overflow-wrap: anywhere; /* long emails can't break at spaces —
+                               this lets them wrap mid-word instead
+                               of pushing the ADMIN chip off-screen */
+}
+.role-chip { flex-shrink: 0; }
 .user-row .subtitle { font-size: 12px; color: var(--text-faint); margin-top: 4px; }
 
 .row-actions { display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end; }
@@ -447,25 +470,61 @@ nav.bottom-tabs button.active { color: var(--accent); background: var(--accent-s
 .empty-state .empty-icon { width: 40px; height: 40px; margin: 0 auto 14px auto; opacity: 0.5; }
 
 /* ---------- Transactions table (stacked cards on mobile, a real
-   table on desktop — see the min-width:900px override) ---------- */
+   table on desktop — see the min-width:900px override) ----------
+   The card is a CSS grid with named areas rather than a wrapping
+   flex row: a flex row reflows its cells wherever there's leftover
+   space on the line, so a short product name left room for Qty to
+   ride up next to it while a long one pushed everything below —
+   the result looked different on every single card. A grid gives
+   every field the same fixed slot regardless of text length. */
 .tx-table { width: 100%; border-collapse: collapse; }
 .tx-table thead { display: none; }
 .tx-table tbody { display: block; }
 .tx-table tr {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 14px;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  grid-template-areas:
+    "icon   product product"
+    ".      qty     amount"
+    ".      person  person"
+    ".      date    date"
+    "actions actions actions";
+  column-gap: 14px;
+  row-gap: 10px;
+  align-items: start;
   background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 16px;
   margin-bottom: 10px;
   transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
 }
 .tx-table tr:hover { border-color: var(--border); box-shadow: var(--shadow-lift); }
-.tx-table td { display: block; border: none; padding: 0; }
-.tx-table td.tx-col-icon { order: -1; margin-right: 2px; }
+.tx-table td { display: block; border: none; padding: 0; min-width: 0; }
+
+.tx-table td.tx-col-icon { grid-area: icon; align-self: center; }
+.tx-table td[data-label="Product"] { grid-area: product; align-self: center; }
+.tx-table td[data-label="Qty"] { grid-area: qty; }
+.tx-table td[data-label="Amount"] { grid-area: amount; }
+.tx-table td[data-label="Salesperson"] { grid-area: person; }
+.tx-table td[data-label="Date"] { grid-area: date; }
+.tx-table td.tx-col-actions { grid-area: actions; }
+
+/* Reserve space so the product name can't run under the corner
+   number badge on mobile; cleared again in the desktop table
+   override below. */
+.tx-product-name { padding-right: 34px; }
+
+/* Row number: a small badge pinned to the card's corner instead of a
+   grid cell — it's metadata about the row, not one of its fields, so
+   it doesn't need to compete with them for space. */
+.tx-table td.tx-col-num {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+}
+
 .tx-table td[data-label]::before {
   content: attr(data-label);
   display: block;
@@ -474,17 +533,18 @@ nav.bottom-tabs button.active { color: var(--accent); background: var(--accent-s
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-faint);
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
-.tx-product-name { font-weight: 700; font-size: 14.5px; }
-/* In the mobile card layout the number sits first as a bare badge —
-   the "#" field label above it would just be noise. Declared after
-   the td[data-label]::before rule so it wins the tie on specificity. */
-.tx-table td.tx-col-num { order: -2; }
+/* Both need to come after the generic rule above to win the
+   specificity tie: the product name sits right next to its icon at
+   a larger size, so an uppercase "PRODUCT" label above it is
+   redundant, and the same goes for "#" above the corner badge. */
+.tx-table td[data-label="Product"]::before { content: none; }
 .tx-table td.tx-col-num::before { content: none; }
+
 .tx-remarks { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
-.tx-table td.tx-col-actions { margin-left: auto; width: 100%; order: 99; }
-.tx-table .row-actions { margin-top: 8px; }
+
+.tx-table .row-actions { margin-top: 4px; }
 
 /* ---------- Sales trend chart (desktop only) ---------- */
 /* ---------- Filter chips (date presets) ---------- */
@@ -714,6 +774,17 @@ nav.bottom-tabs button.active { color: var(--accent); background: var(--accent-s
 .fab:hover { background: var(--accent-hover); transform: scale(1.05); }
 .fab:active { transform: scale(0.96); }
 
+/* The FAB is fixed in place, so it never scrolls out of the way —
+   without this, it permanently sits on top of the last card's
+   buttons once you scroll to the bottom of a long list. This pads
+   the two screens that show a FAB with enough room to clear it
+   (fab height 54px + its 90px offset from the bottom, plus a gap).
+   Desktop pins the FAB differently (see the 900px override) and
+   doesn't need this. */
+@media (max-width: 899px) {
+  #screen-products, #screen-users { padding-bottom: 90px; }
+}
+
 /* ---------- Modal ---------- */
 .modal-backdrop {
   position: fixed; inset: 0;
@@ -834,7 +905,13 @@ select {
 .dash-side { display: flex; flex-direction: column; }
 .sidebar-brand { display: none; }
 
-.sidebar-signout { display: none; }
+/* Matches the specificity of `nav.bottom-tabs button { display: flex }`
+   above — a plain `.sidebar-signout { display: none }` here was
+   losing that tie (both have one class, but the other rule also
+   carries the `nav` and `button` type selectors), so this button
+   was showing up in the mobile tab bar even though "Sign out" is
+   already reachable from the top bar. */
+nav.bottom-tabs button.sidebar-signout { display: none; }
 
 /* =================================================================
    DESKTOP LAYOUT — the bottom tab bar becomes an inset, rounded
@@ -902,7 +979,10 @@ select {
   }
   nav.bottom-tabs button svg { width: 19px; height: 19px; }
 
-  .sidebar-signout {
+  /* Must match (or beat) the specificity of the mobile hide rule
+     above (nav.bottom-tabs button.sidebar-signout), or this stays
+     hidden on desktop too. */
+  nav.bottom-tabs button.sidebar-signout {
     display: flex;
     margin-top: auto;
     padding-top: 12px;
@@ -912,6 +992,11 @@ select {
   .sidebar-signout:hover { background: var(--danger-soft); }
 
   header.topbar { margin-left: 256px; padding: 20px 32px; }
+
+  /* The sidebar has its own Sign out at the bottom now, so the
+     top-bar one is redundant here (it's still the only one on
+     mobile, where there's no sidebar). */
+  .topbar-actions { display: none; }
 
   main.screen {
     /* Fluid: fills everything to the right of the sidebar instead of
@@ -977,7 +1062,11 @@ select {
      possible width so the timestamp wraps onto four lines. */
   .tx-table td[data-label]::before { content: none; }
   .tx-table td.tx-col-icon { width: 48px; margin-right: 0; }
-  .tx-table td.tx-col-num, .tx-table th.tx-col-num { width: 44px; text-align: center; }
+  .tx-table td.tx-col-num, .tx-table th.tx-col-num {
+    width: 44px;
+    text-align: center;
+    position: static; /* undo the mobile corner-badge positioning */
+  }
   .tx-table td.tx-col-actions {
     width: 1%;
     margin-left: 0;
@@ -989,6 +1078,7 @@ select {
      amount, date, actions) size to their content instead of fighting
      over the slack. */
   .tx-table td[data-label="Product"] { width: 100%; }
+  .tx-product-name { padding-right: 0; }
   .tx-table td[data-label="Date"] { white-space: nowrap; color: var(--text-dim); }
   .tx-table td[data-label="Qty"] { white-space: nowrap; }
   .tx-table .row-actions { margin-top: 0; justify-content: flex-end; }
